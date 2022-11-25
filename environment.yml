@@ -1,0 +1,28 @@
+name: pyMbseMdo
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - matplotlib
+  - pandas
+  - pytest
+  - scipy
+  - seaborn
+  - ca-certificates
+  - numpy
+  - h5py
+  - plotly
+  - sympy
+  - jupyter
+  - ipywidgets
+  - pip:
+      - openmdao
+      - pyxdsm
+      - casadi
+      - pint
+      - networkx
+      - -e git+https://github.com/LSDOlab/csdl.git@master#egg=csdl
+      - -e git+https://github.com/LSDOlab/csdl_om.git@master#egg=csdl_om
+      - -e git+https://github.com/LSDOlab/python_csdl_backend.git@master#egg=python_csdl_backend
