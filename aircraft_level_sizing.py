@@ -13,6 +13,9 @@ class AircraftLevelSizing(csdl.Model):
         Aeff = self.create_input(name='Aeff', desc='Aspect ratio')
         M = self.create_input(name='M', desc='Mach number')
         Phi25 = self.create_input(name='Phi25', units='deg', desc='Sweep angle, at 25% of chord')
+        R = self.create_input(name='R', desc='Range')
+        sfc_cr = self.create_input(name='sfc_cr', desc='Cruise SFC')
+        BPR = self.create_input(name='BPR', desc='By-pass ratio')
 
         # region Constraint Analysis
         # Landing
@@ -29,8 +32,16 @@ class AircraftLevelSizing(csdl.Model):
         # endregion
 
         # Mission Analysis
-
+        self.add(submodel=MissionAnalysis(), name='MissionAnalysis', promotes=[])
+        self.connect('M', 'MissionAnalysis.M')
+        self.connect('R', 'MissionAnalysis.R')
+        self.connect('sfc_cr', 'MissionAnalysis.sfc_cr')
+        self.connect('BPR', 'MissionAnalysis.BPR')
         # endregion
+
+        # # Aircraft parameters
+        # Sw = m_mto / WbyS
+        # Tto = m_mto * self.parameters['g'] * TbyW
         return
 
 
@@ -163,7 +174,7 @@ class MissionAnalysis(csdl.Model):
         Emax = self.declare_variable(name='Emax', desc='Maximum glide ratio in cruise')
         M = self.declare_variable(name='M', desc='Mach number')
         TbyW = self.declare_variable(name='TbyW', desc='Thrust loading')
-        WbyS = self.declare_variable(name='WbyS', desc='Wing loading')
+        # WbyS = self.declare_variable(name='WbyS', desc='Wing loading')
         R = self.declare_variable(name='R', desc='Design range')  # nautical miles
         s_alt = self.declare_variable(name='s_alt', desc='Distance to alternate')  # nautical miles
         s_res = self.declare_variable(name='s_res', desc='Reserve flight distance')  # m
@@ -216,7 +227,6 @@ class MissionAnalysis(csdl.Model):
         Mff_reserve = Mff_clb * Mff_res * Mff_loiter * Mff_des
         Mff_total = Mff_standard * Mff_reserve
         mFbymMTO = 1 - Mff_total
-        self.print_var(var=mFbymMTO)
 
         # Masses
         mOEbymMTO = 0.56  # relative operating empty mass
@@ -224,17 +234,10 @@ class MissionAnalysis(csdl.Model):
         n_pax = 180
         m_cargo = 2516  # kg
         m_pl = m_pax * n_pax + m_cargo
-        print(m_pl)
         m_mto = m_pl / (1-mFbymMTO-mOEbymMTO)
-        self.print_var(var=m_mto)
+        self.register_output(name='m_mto', var=m_mto)
         m_f = m_mto * mFbymMTO
-        self.print_var(var=m_f)
-
-        # Aircraft parameters
-        Sw = m_mto / WbyS
-        Tto = m_mto*self.parameters['g'] * TbyW
-        self.print_var(var=Sw)
-        self.print_var(var=Tto)
+        self.register_output(name='m_f', var=m_f)
         return
 
 
@@ -243,9 +246,14 @@ if __name__ == '__main__':
 
     sim['Phi25'] = 25.
     sim['Aeff'] = 9.5
+    sim['M'] = 0.76
+    sim['R'] = 1510.  # NM
+    sim['sfc_cr'] = 1.65E-05  # kg/N/s
+    sim['BPR'] = 6.
 
     sim['Landing.slfl'] = 1448.
     sim['Landing.dTl'] = 0.
+
     sim['Landing.CLmax_L_unswept'] = 3.76
 
     sim['Takeoff.mLbymTO'] = 0.878
@@ -255,22 +263,17 @@ if __name__ == '__main__':
 
     sim['GlideRatio.nE'] = 2
 
+    sim['MissionAnalysis.VbyVmd'] = 0.94844796  # 0.94844796
+    sim['MissionAnalysis.Emax'] = 17.48
+    sim['MissionAnalysis.TbyW'] = 0.30750
+    # sim['MissionAnalysis.WbyS'] = 600.05
+    sim['MissionAnalysis.s_res'] = 510226.  # m
+    # sim['s_alt'] = 200.  # NM
+
     sim.run()
     print('Approach speed (m/s): ', sim['Landing.Vapp'])
     print('Wing loading at max. landing mass: ', sim['Landing.mLbySW'])
     print('Wing loading at max. takeoff mass: ', sim['Takeoff.mTObySW'])
     print('Thrust-to-weight ratio: ', sim['Takeoff.TtobyWto'])
     print('Thrust-to-weight ratio: ', sim['GlideRatio.TtobyWto'])
-
-    sim = python_csdl_backend.Simulator(MissionAnalysis())
-    sim['BPR'] = 6.
-    sim['VbyVmd'] = 1.32  # 0.94844796
-    sim['Emax'] = 17.48
-    sim['M'] = 0.76
-    sim['TbyW'] = 0.30750
-    sim['R'] = 1510.  # NM
-    # sim['s_alt'] = 200.  # NM
-    sim['s_res'] = 510226.  # m
-    sim['sfc_cr'] = 1.65E-05  # kg/N/s
-    sim['WbyS'] = 600.05
-    sim.run()
+    print('Aircraft mass (kg) ', sim['MissionAnalysis.m_mto'])
