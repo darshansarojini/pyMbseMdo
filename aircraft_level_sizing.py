@@ -18,25 +18,21 @@ class AircraftLevelSizing(csdl.Model):
         BPR = self.create_input(name='BPR', desc='By-pass ratio')
 
         # region Constraint Analysis
-        # Landing
-        self.add(submodel=Landing(), name='Landing', promotes=[])
-        self.connect('Phi25', 'Landing.Phi25')
-        # Takeoff
-        self.add(submodel=Takeoff(), name='Takeoff', promotes=[])
-        self.connect('Phi25', 'Takeoff.Phi25')
-        self.connect('Landing.mLbySW', 'Takeoff.mLbySW')
-        # Glide ratio
-        self.add(submodel=GlideRatio(), name='GlideRatio', promotes=[])
-        self.connect('Aeff', 'GlideRatio.Aeff')
-        self.connect('Takeoff.CLmax_TO_swept', 'GlideRatio.CLmax_TO_swept')
+        self.add(submodel=ConstraintAnalysis(),
+                 name='ConstraintAnalysis', promotes=[])
+        self.connect('Aeff', 'ConstraintAnalysis.Aeff')
+        self.connect('Phi25', 'ConstraintAnalysis.Phi25')
         # endregion
 
         # Mission Analysis
         self.add(submodel=MissionAnalysis(), name='MissionAnalysis', promotes=[])
+
         self.connect('M', 'MissionAnalysis.M')
         self.connect('R', 'MissionAnalysis.R')
         self.connect('sfc_cr', 'MissionAnalysis.sfc_cr')
         self.connect('BPR', 'MissionAnalysis.BPR')
+
+        self.connect('ConstraintAnalysis.TbyW', 'MissionAnalysis.TbyW')
         # endregion
 
         # # Aircraft parameters
@@ -162,6 +158,65 @@ class GlideRatio(csdl.Model):
         return
 
 
+class ConstraintAnalysis(csdl.Model):
+    def initialize(self):
+        return
+
+    def define(self):
+
+        Aeff = self.create_input(name='Aeff', desc='Aspect ratio')
+        Phi25 = self.create_input(name='Phi25', units='deg', desc='Sweep angle, at 25% of chord')
+
+        # region Point performance
+        # Landing
+        self.add(submodel=Landing(), name='Landing', promotes=[])
+        self.connect('Phi25', 'Landing.Phi25')
+        # Takeoff
+        self.add(submodel=Takeoff(), name='Takeoff', promotes=[])
+        self.connect('Phi25', 'Takeoff.Phi25')
+        self.connect('Landing.mLbySW', 'Takeoff.mLbySW')
+        # Glide ratio
+        self.add(submodel=GlideRatio(), name='GlideRatio', promotes=[])
+        self.connect('Aeff', 'GlideRatio.Aeff')
+        self.connect('Takeoff.CLmax_TO_swept', 'GlideRatio.CLmax_TO_swept')
+        # endregion
+
+        # region Sizing point
+
+        TbyW_glide = self.declare_variable(name='TbyW_glide')
+        self.connect('GlideRatio.TtobyWto', 'TbyW_glide')
+        TbyW_takeoff = self.declare_variable(name='TbyW_takeoff')
+        self.connect('Takeoff.TtobyWto', 'TbyW_takeoff')
+
+        TbyW_ma = self.declare_variable(name='TbyW_ma', val=0.27853)
+        TbyW_cr = self.declare_variable(name='TbyW_cr', val=0.30750)
+
+        WbyS_takeoff = self.declare_variable(name='WbyS_takeoff')
+        self.print_var(var=WbyS_takeoff)
+        self.connect('Takeoff.mTObySW', 'WbyS_takeoff')
+        WbyS_landing = self.declare_variable(name='WbyS_landing')
+        self.print_var(var=WbyS_landing)
+        self.connect('Landing.mLbySW', 'WbyS_landing')
+
+        self.print_var(var=TbyW_takeoff)
+        self.print_var(var=TbyW_glide)
+
+        scaling_parameter_TbyW = 1e3
+        TbyW = csdl.max(TbyW_takeoff*scaling_parameter_TbyW,
+                        TbyW_glide*scaling_parameter_TbyW,
+                        TbyW_ma*scaling_parameter_TbyW,
+                        TbyW_cr*scaling_parameter_TbyW,
+                        rho=20.)
+        self.print_var(var=TbyW)
+        self.register_output(name='TbyW', var=TbyW/scaling_parameter_TbyW)
+
+        WbyS = csdl.max(WbyS_takeoff, WbyS_landing)
+        self.register_output(name='WbyS', var=WbyS)
+        # endregion
+
+        return
+
+
 class MissionAnalysis(csdl.Model):
     def initialize(self):
         self.parameters.declare(name='nm_to_m', default=1852., types=float)
@@ -251,29 +306,30 @@ if __name__ == '__main__':
     sim['sfc_cr'] = 1.65E-05  # kg/N/s
     sim['BPR'] = 6.
 
-    sim['Landing.slfl'] = 1448.
-    sim['Landing.dTl'] = 0.
+    sim['ConstraintAnalysis.Landing.slfl'] = 1448.
+    sim['ConstraintAnalysis.Landing.dTl'] = 0.
+    sim['ConstraintAnalysis.Landing.CLmax_L_unswept'] = 3.76
 
-    sim['Landing.CLmax_L_unswept'] = 3.76
+    sim['ConstraintAnalysis.Takeoff.mLbymTO'] = 0.878
+    sim['ConstraintAnalysis.Takeoff.stofl'] = 1768.
+    sim['ConstraintAnalysis.Takeoff.dTto'] = 0.
+    sim['ConstraintAnalysis.Takeoff.CLmax_TO_unswept'] = 2.85
 
-    sim['Takeoff.mLbymTO'] = 0.878
-    sim['Takeoff.stofl'] = 1768.
-    sim['Takeoff.dTto'] = 0.
-    sim['Takeoff.CLmax_TO_unswept'] = 2.85
-
-    sim['GlideRatio.nE'] = 2
+    sim['ConstraintAnalysis.GlideRatio.nE'] = 2
 
     sim['MissionAnalysis.VbyVmd'] = 0.94844796  # 0.94844796
     sim['MissionAnalysis.Emax'] = 17.48
-    sim['MissionAnalysis.TbyW'] = 0.30750
+    # sim['MissionAnalysis.TbyW'] = 0.30750
     # sim['MissionAnalysis.WbyS'] = 600.05
     sim['MissionAnalysis.s_res'] = 510226.  # m
     # sim['s_alt'] = 200.  # NM
 
     sim.run()
-    print('Approach speed (m/s): ', sim['Landing.Vapp'])
-    print('Wing loading at max. landing mass: ', sim['Landing.mLbySW'])
-    print('Wing loading at max. takeoff mass: ', sim['Takeoff.mTObySW'])
-    print('Thrust-to-weight ratio: ', sim['Takeoff.TtobyWto'])
-    print('Thrust-to-weight ratio: ', sim['GlideRatio.TtobyWto'])
+    print('Approach speed (m/s): ', sim['ConstraintAnalysis.Landing.Vapp'])
+    print('Wing loading at max. landing mass: ', sim['ConstraintAnalysis.Landing.mLbySW'])
+    print('Wing loading at max. takeoff mass: ', sim['ConstraintAnalysis.Takeoff.mTObySW'])
+    print('Thrust-to-weight ratio takeoff: ', sim['ConstraintAnalysis.Takeoff.TtobyWto'])
+    print('Thrust-to-weight ratio glide: ', sim['ConstraintAnalysis.GlideRatio.TtobyWto'])
+    print('Sizing thrust-to-weight ratio: ', sim['ConstraintAnalysis.TbyW'])
+    print('Sizing wing loading: ', sim['ConstraintAnalysis.WbyS'])
     print('Aircraft mass (kg) ', sim['MissionAnalysis.m_mto'])
