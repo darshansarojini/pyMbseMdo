@@ -29,6 +29,10 @@ class AircraftLevelSizing(csdl.Model):
         self.connect('mLbymTO', 'ConstraintAnalysis.mLbymTO')
         # endregion
 
+        # region Cruise Aerodynamics
+        self.add(submodel=CruiseAerodynamics(), name='CruiseAerodynamics', promotes=[])
+        # endregion
+
         # Mission Analysis
         self.add(submodel=MissionAnalysis(), name='MissionAnalysis', promotes=[])
 
@@ -40,6 +44,7 @@ class AircraftLevelSizing(csdl.Model):
         self.connect('mOEbymTO', 'MissionAnalysis.mOEbymTO')
 
         self.connect('ConstraintAnalysis.TbyW', 'MissionAnalysis.TbyW')
+        self.connect('CruiseAerodynamics.Emax', 'MissionAnalysis.Emax')
         # endregion
 
         # region Aircraft parameters
@@ -64,6 +69,7 @@ class Landing(csdl.Model):
         self.parameters.declare(name='kapp', default=1.7, types=float)
         # Constants
         self.parameters.declare(name='kts_to_ms', default=1.944, types=float)
+        self.parameters.declare(name='g', default=9.81, types=float)
         return
 
     def define(self):
@@ -85,7 +91,7 @@ class Landing(csdl.Model):
         s = 288.15/(288.15+dTl)
 
         # Landing Factor
-        g = 9.81
+        g = self.parameters['g']
         kL = (1.225/(2*g*1.3*1.3)) * kapp**2
 
         # Max lift coefficient at landing accounting for sweep
@@ -134,7 +140,11 @@ class Takeoff(csdl.Model):
 
 class GlideRatio(csdl.Model):
     def initialize(self):
-
+        self.parameters.declare(name='Lift-independent drag coefficient, clean', default=0.0188)  # todo: compute
+        self.parameters.declare(name='Lift-independent drag coefficient, flaps', default=0.0347)  # todo: compute
+        self.parameters.declare(name='Lift-independent drag coefficient, slats', default=0.)
+        self.parameters.declare(name='Oswald efficiency factor; landing configuration', default=0.69)  # todo: compute
+        self.parameters.declare(name='Climb gradient', default=0.024)
         return
 
     def define(self):
@@ -147,31 +157,54 @@ class GlideRatio(csdl.Model):
         CLTO = CLmax_TO_swept / (1.2**2)
 
         # Lift-independent drag coefficient
-        CD0 = 0.0188  # Clean
-        dCD0_flap = 0.0347  # Flaps
-        dCD0_slat = 0.  # Slats
+        CD0 = self.parameters['Lift-independent drag coefficient, clean']
+        dCD0_flap = self.parameters['Lift-independent drag coefficient, flaps']
+        dCD0_slat = self.parameters['Lift-independent drag coefficient, slats']
 
         # Profile drag
         CDP = CD0 + dCD0_flap + dCD0_slat
 
         # Ostwald Efficiency factor, landing configuration
-        e = 0.69
+        e = self.parameters['Oswald efficiency factor; landing configuration']
 
         # Glide ratio in takeoff configuration
-        ETO = CLTO / (CDP+CLTO**2/(np.pi*Aeff*e))
+        L_D_TO = CLTO / (CDP+CLTO**2/(np.pi*Aeff*e))
 
         # Climb gradient
-        sinGamma = 0.024
+        sinGamma = self.parameters['Climb gradient']
 
         # Thrust-to-weight ratio
-        TtobyWto = nE / (nE-1) * (1/ETO+sinGamma)
+        TtobyWto = nE / (nE-1) * (1/L_D_TO+sinGamma)
         self.register_output(name='TtobyWto', var=TtobyWto)
 
-        # Maximum glide ratio
-        kE = 14.2
-        SwetbySw = 6.27
-        Emax = kE * (Aeff/SwetbySw)**2
-        self.register_output(name='Emax', var=Emax)
+        # # Maximum glide ratio
+        # kE = 14.2
+        # SwetbySw = 6.27
+        # Emax = kE * (Aeff/SwetbySw)**2
+        # self.register_output(name='Emax', var=Emax)
+        return
+
+
+class MissedApproach(csdl.Model):
+
+    def initialize(self):
+        return
+
+    def define(self):
+        temp = self.declare_variable(name='temp', val=0.27853)
+        self.register_output(name='TbyW_ma', var=temp*1)
+        # todo: compute
+        return
+
+
+class CruiseMatching(csdl.Model):
+    def initialize(self):
+        return
+
+    def define(self):
+        temp = self.declare_variable(name='temp', val=0.30750)
+        self.register_output(name='TbyW_cr', var=temp * 1)
+        # todo: compute
         return
 
 
@@ -199,6 +232,10 @@ class ConstraintAnalysis(csdl.Model):
         self.add(submodel=GlideRatio(), name='GlideRatio', promotes=[])
         self.connect('Aeff', 'GlideRatio.Aeff')
         self.connect('Takeoff.CLmax_TO_swept', 'GlideRatio.CLmax_TO_swept')
+        # Missed approach
+        self.add(submodel=MissedApproach(), name='MissedApproach', promotes=[])
+        # Cruise matching
+        self.add(submodel=CruiseMatching(), name='CruiseMatching', promotes=[])
         # endregion
 
         # region Sizing point
@@ -207,9 +244,10 @@ class ConstraintAnalysis(csdl.Model):
         self.connect('GlideRatio.TtobyWto', 'TbyW_glide')
         TbyW_takeoff = self.declare_variable(name='TbyW_takeoff')
         self.connect('Takeoff.TtobyWto', 'TbyW_takeoff')
-
-        TbyW_ma = self.declare_variable(name='TbyW_ma', val=0.27853)
-        TbyW_cr = self.declare_variable(name='TbyW_cr', val=0.30750)
+        TbyW_ma = self.declare_variable(name='TbyW_ma')
+        self.connect('MissedApproach.TbyW_ma', 'TbyW_ma')
+        TbyW_cr = self.declare_variable(name='TbyW_cr')
+        self.connect('CruiseMatching.TbyW_cr', 'TbyW_cr')
 
         WbyS_takeoff = self.declare_variable(name='WbyS_takeoff')
         self.connect('Takeoff.mTObySW', 'WbyS_takeoff')
@@ -223,11 +261,23 @@ class ConstraintAnalysis(csdl.Model):
                         TbyW_cr*scaling_parameter_TbyW,
                         rho=20.)
         self.register_output(name='TbyW', var=TbyW/scaling_parameter_TbyW)
+        self.print_var(var=TbyW/scaling_parameter_TbyW)
 
         WbyS = csdl.max(WbyS_takeoff, WbyS_landing)
         self.register_output(name='WbyS', var=WbyS)
         # endregion
 
+        return
+
+
+class CruiseAerodynamics(csdl.Model):
+    def initialize(self):
+        return
+
+    def define(self):
+        temp = self.declare_variable(name='temp', val=17.48)
+        self.register_output(name='Emax', var=temp * 1)
+        # todo: compute
         return
 
 
@@ -262,11 +312,7 @@ class MissionAnalysis(csdl.Model):
         self.register_output(name='hcr', var=hcr)
 
         # Cruise speed
-        # Tcr = 288.15 - 0.0065 * hcr  # K
-        # Tstrat = self.declare_variable(name='Tstrat', val=216.65)  # K
-        # if Tcr < Tstrat:
-        #     Tcr = Tstrat
-        Tcr = 216.65
+        Tcr = 216.65  # todo: atmosisa
         acr = 20.05 * Tcr**0.5
         Vcr = acr * M  # m/s
         self.register_output(name='Vcr', var=Vcr)
@@ -338,6 +384,7 @@ class MissionAnalysis(csdl.Model):
         constr_m_ml = m_ml - m_ml_comp
         self.register_output(name='Constraint_m_ml', var=constr_m_ml)
         self.add_constraint(name='Constraint_m_ml', lower=0.)
+        self.print_var(var=constr_m_ml)
         return
 
 
@@ -357,32 +404,32 @@ class FuelTankVolume(csdl.Model):
 if __name__ == '__main__':
     sim = python_csdl_backend.Simulator(AircraftLevelSizing())
 
+    # Aircraft design variables
     sim['Phi25'] = 25.
     sim['Aeff'] = 9.5
+    sim['BPR'] = 6.
+    sim['ConstraintAnalysis.Landing.CLmax_L_unswept'] = 3.76
+    sim['ConstraintAnalysis.Takeoff.CLmax_TO_unswept'] = 2.85
+    # sim['MissionAnalysis.Emax'] = 17.48
+
+    # Operating conditions
     sim['M'] = 0.76
     sim['R'] = 1510.  # NM
-    sim['sfc_cr'] = 1.65E-05  # kg/N/s
-    sim['BPR'] = 6.
-
-    sim['mLbymTO'] = 0.878
-    sim['mOEbymTO'] = 0.56
-
     sim['ConstraintAnalysis.Landing.slfl'] = 1448.
     sim['ConstraintAnalysis.Landing.dTl'] = 0.
-    sim['ConstraintAnalysis.Landing.CLmax_L_unswept'] = 3.76
-
     sim['ConstraintAnalysis.Takeoff.stofl'] = 1768.
     sim['ConstraintAnalysis.Takeoff.dTto'] = 0.
-    sim['ConstraintAnalysis.Takeoff.CLmax_TO_unswept'] = 2.85
-
     sim['ConstraintAnalysis.GlideRatio.nE'] = 2
 
-    sim['MissionAnalysis.VbyVmd'] = 0.94844796  # 0.94844796
-    sim['MissionAnalysis.Emax'] = 17.48
-    # sim['MissionAnalysis.TbyW'] = 0.30750
-    # sim['MissionAnalysis.WbyS'] = 600.05
+    # Emperical values
+    sim['mLbymTO'] = 0.878
+    sim['mOEbymTO'] = 0.56
     sim['MissionAnalysis.s_res'] = 510226.  # m
-    # sim['s_alt'] = 200.  # NM
+    # sim['MissionAnalysis.s_alt'] = 200.  # NM
+
+    sim['sfc_cr'] = 1.65E-05  # kg/N/s
+
+    sim['MissionAnalysis.VbyVmd'] = 0.94844796  # 0.94844796
 
     sim.run()
     print('Approach speed (m/s): ', sim['ConstraintAnalysis.Landing.Vapp'])
