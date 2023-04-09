@@ -18,7 +18,6 @@ class AircraftLevelSizing(csdl.Model):
         M = self.create_input(name='M', desc='Mach number')
         Phi25 = self.create_input(name='Phi25', units='deg', desc='Sweep angle, at 25% of chord')
         R = self.create_input(name='R', desc='Range')
-        sfc_cr = self.create_input(name='sfc_cr', desc='Cruise SFC')
         BPR = self.create_input(name='BPR', desc='By-pass ratio')
 
         mLbymTO = self.create_input(name='mLbymTO', desc='Mass ratio, landing - take-off')
@@ -41,7 +40,6 @@ class AircraftLevelSizing(csdl.Model):
 
         self.connect('M', 'MissionAnalysis.M')
         self.connect('R', 'MissionAnalysis.R')
-        self.connect('sfc_cr', 'MissionAnalysis.sfc_cr')
         self.connect('BPR', 'MissionAnalysis.BPR')
         self.connect('mLbymTO', 'MissionAnalysis.mLbymTO')
         self.connect('mOEbymTO', 'MissionAnalysis.mOEbymTO')
@@ -289,7 +287,25 @@ class MissionAnalysis(csdl.Model):
         self.parameters.declare(name='nm_to_m', default=1852., types=float)
         self.parameters.declare(name='g', default=9.81, types=float)
 
-        self.parameters.declare(name='Loiter time', default=1800., types=float)  # 1800s for international, 2700s for domestic
+        self.parameters.declare(name='Loiter time', default=1800.,
+                                types=float)  # 1800s for international, 2700s for domestic
+        self.parameters.declare(name='SFC cruise', default=1.65e-05,  # kg/N/s
+                                types=float, desc='Spec.fuel consumption, cruise')  # todo: compute
+        self.parameters.declare(name='s_alt', default=200.,
+                                types=float, desc='Alternate flight distance')
+        self.parameters.declare(name='s_longrange', default=5.,  # 5% for international, 0% for domestic
+                                types=float, desc='Extra distance for long range in %')
+
+        self.parameters.declare(name='Mff_taxi', default=0.997,
+                                types=float, desc='Fuel-Fraction, taxi')
+        self.parameters.declare(name='Mff_to', default=0.993,
+                                types=float, desc='Fuel-Fraction, take-off')
+        self.parameters.declare(name='Mff_clb', default=0.993,
+                                types=float, desc='Fuel-Fraction, climb')
+        self.parameters.declare(name='Mff_des', default=0.993,
+                                types=float, desc='Fuel-Fraction, descent')
+        self.parameters.declare(name='Mff_l', default=0.993,
+                                types=float, desc='Fuel-Fraction, landing')
         return
 
     def define(self):
@@ -300,9 +316,7 @@ class MissionAnalysis(csdl.Model):
         TbyW = self.declare_variable(name='TbyW', desc='Thrust loading')
         # WbyS = self.declare_variable(name='WbyS', desc='Wing loading')
         R = self.declare_variable(name='R', desc='Design range')  # nautical miles
-        s_alt = self.declare_variable(name='s_alt', desc='Distance to alternate')  # nautical miles
-        s_res = self.declare_variable(name='s_res', desc='Reserve flight distance')  # m
-        sfc_cr = self.declare_variable(name='sfc_cr', desc='Cruise specific fuel consumption')  # kg/N/s
+
         mLbymTO = self.declare_variable(name='mLbymTO', desc='Mass ratio, landing - take-off')
         mOEbymTO = self.declare_variable(name='mOEbymTO', desc='Relative operating empty mass')
 
@@ -327,8 +341,11 @@ class MissionAnalysis(csdl.Model):
         self.register_output(name='Vcr', var=Vcr)
 
         # Mission ranges
-        R = R * self.parameters['nm_to_m']
-        # s_alt = s_alt * self.parameters['nm_to_m']
+        R = R * self.parameters['nm_to_m']  # m
+        s_alt = self.parameters['s_alt'] * self.parameters['nm_to_m']  # m
+        s_res = s_alt + self.parameters['s_longrange']/100 * R  # m
+
+        sfc_cr = self.parameters['SFC cruise']  # kg/N/s
 
         # Cruise
         B_cruise = E * Vcr / sfc_cr / self.parameters['g']  # Breguet factor
@@ -337,16 +354,16 @@ class MissionAnalysis(csdl.Model):
 
         # Loiter
         t_loiter = self.parameters['Loiter time']  # s
-        sfc_loiter = sfc_cr
+        # sfc_loiter = sfc_cr
         B_loiter = B_cruise/Vcr
         Mff_loiter = csdl.exp(-t_loiter/B_loiter)
 
         #  Emperical fuel fractions
-        Mff_taxi = 0.997
-        Mff_to = 0.993
-        Mff_clb = 0.993
-        Mff_des = 0.993
-        Mff_l = 0.993
+        Mff_taxi = self.parameters['Mff_taxi']
+        Mff_to = self.parameters['Mff_to']
+        Mff_clb = self.parameters['Mff_clb']
+        Mff_des = self.parameters['Mff_des']
+        Mff_l = self.parameters['Mff_l']
 
         # Final fuel fractions
         Mff_standard = Mff_to * Mff_clb * Mff_cr * Mff_des * Mff_l
@@ -433,10 +450,10 @@ if __name__ == '__main__':
     # Emperical values
     sim['mLbymTO'] = 0.878
     sim['mOEbymTO'] = 0.56
-    sim['MissionAnalysis.s_res'] = 510226.  # m
+    # sim['MissionAnalysis.s_res'] = 510226.  # m
     # sim['MissionAnalysis.s_alt'] = 200.  # NM
 
-    sim['sfc_cr'] = 1.65E-05  # kg/N/s
+    # sim['sfc_cr'] = 1.65E-05  # kg/N/s
 
     sim['MissionAnalysis.VbyVmd'] = 0.94844796  # 0.94844796
 
