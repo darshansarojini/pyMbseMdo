@@ -3,6 +3,9 @@ import numpy as np
 import csdl
 import python_csdl_backend
 import csdl_om
+from modopt.scipy_library import SLSQP
+from modopt.csdl_library import CSDLProblem
+from lsdo_atmos.atmosphere_model import AtmosphereModel
 
 
 class AircraftLevelSizing(csdl.Model):
@@ -285,6 +288,8 @@ class MissionAnalysis(csdl.Model):
     def initialize(self):
         self.parameters.declare(name='nm_to_m', default=1852., types=float)
         self.parameters.declare(name='g', default=9.81, types=float)
+
+        self.parameters.declare(name='Loiter time', default=1800., types=float)  # 1800s for international, 2700s for domestic
         return
 
     def define(self):
@@ -312,8 +317,12 @@ class MissionAnalysis(csdl.Model):
         self.register_output(name='hcr', var=hcr)
 
         # Cruise speed
-        Tcr = 216.65  # todo: atmosisa
-        acr = 20.05 * Tcr**0.5
+        self.add(submodel=AtmosphereModel(shape=(1,)), name='Atmosisa', promotes=[])
+        acr = self.declare_variable(name='acr')
+        self.connect('hcr', 'Atmosisa.z')
+        self.connect('Atmosisa.speed_of_sound', 'acr')
+        # Tcr = 216.65
+        # acr = 20.05 * Tcr**0.5
         Vcr = acr * M  # m/s
         self.register_output(name='Vcr', var=Vcr)
 
@@ -327,7 +336,7 @@ class MissionAnalysis(csdl.Model):
         Mff_res = csdl.exp(-s_res/B_cruise)  # Fuel fraction, extra flight distance
 
         # Loiter
-        t_loiter = 1800  # s
+        t_loiter = self.parameters['Loiter time']  # s
         sfc_loiter = sfc_cr
         B_loiter = B_cruise/Vcr
         Mff_loiter = csdl.exp(-t_loiter/B_loiter)
