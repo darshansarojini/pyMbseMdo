@@ -19,6 +19,8 @@ class AircraftLevelSizing(csdl.Model):
         Phi25 = self.create_input(name='Phi25', units='deg', desc='Sweep angle, at 25% of chord')
         R = self.create_input(name='R', desc='Range')
         BPR = self.create_input(name='BPR', desc='By-pass ratio')
+        lambdaeff = self.create_input(name='lambdaeff', desc='Taper ratio')
+        dFo = self.create_input(name='dFo', desc='Fuselage outer diameter')
 
         mLbymTO = self.create_input(name='mLbymTO', desc='Mass ratio, landing - take-off')
 
@@ -27,6 +29,12 @@ class AircraftLevelSizing(csdl.Model):
 
         # region Cruise Aerodynamics
         self.add(submodel=CruiseAerodynamics(), name='CruiseAerodynamics', promotes=[])
+        self.connect('Aeff', 'CruiseAerodynamics.Aeff')
+        self.connect('lambdaeff', 'CruiseAerodynamics.lambdaeff')
+        self.connect('Phi25', 'CruiseAerodynamics.Phi25')
+        self.connect('dFo', 'CruiseAerodynamics.dFo')
+        self.connect('Sw', 'CruiseAerodynamics.Sw')
+        self.connect('M', 'CruiseAerodynamics.M')
         # endregion
 
         # region Constraint Analysis
@@ -363,12 +371,67 @@ class ConstraintAnalysis(csdl.Model):
 
 class CruiseAerodynamics(csdl.Model):
     def initialize(self):
+        self.parameters.declare(name='ke_D0', default=0.903,
+                                desc='Factor for zero-lift drag effect')
+        self.parameters.declare(name='Mcomp', default=0.3,
+                                desc='Highest Mach number without compressibility effects')
+        # Coefficients of equation
+        self.parameters.declare(name='ae', default=-0.00270)
+        self.parameters.declare(name='be', default=8.60)
+        self.parameters.declare(name='ce', default=1.0)
+
+        self.parameters.declare(name='Cfeqv', default=0.003,
+                                desc='Equivalent surface friction coefficient')
+        self.parameters.declare(name='SwetbySw', default=6.27,
+                                desc='Relative wetted area')
         return
 
     def define(self):
+        Aeff = self.declare_variable(name='Aeff', desc='Aspect ratio')
+        lambdaeff = self.declare_variable(name='lambdaeff', desc='Taper ratio')
+        Phi25 = self.declare_variable(name='Phi25', desc='Sweep angle, at 25% of chord')
+        dFo = self.declare_variable(name='dFo', desc='Fuselage outer diameter')
+        Sw = self.declare_variable(name='Sw', desc='Wing area')
+        M = self.declare_variable(name='M', desc='Mach number')
+
+
+        dlambda = -0.35659 + 0.45 * csdl.exp(-0.0375 * Phi25)
+
+        # Corrected horner function
+        horner = 0.0524 * (lambdaeff - dlambda) ** 4 - 0.15 * (lambdaeff - dlambda) ** 3 + \
+                 0.1659 * (lambdaeff - dlambda) ** 2 - 0.0706 * (lambdaeff - dlambda) + \
+                 0.0119
+
+        # Ostwald factor, theoretical
+        e_theo = 1 / (1 + horner * Aeff)
+
+        # Geometrical span
+        beff = (Aeff*Sw)**0.5  # m
+
+        # Fuselage factor
+        dfobybeff = dFo/beff
+        ke_F = 1-2*dfobybeff**2
+
+        # Factor for compressibility effect
+        MbyMcomp = M / self.parameters['Mcomp']
+        ke_M = self.parameters['ae']*(MbyMcomp-1)**self.parameters['be']+self.parameters['ce']
+
+        # Ostwald factor corrected
+        e = e_theo * ke_F * self.parameters['ke_D0'] *ke_M
+
+        # ke
+        ke = 1/2*(np.pi*e/self.parameters['Cfeqv'])**0.5
+
+        # Maximum glide ratio
+        Emax = ke*(Aeff/self.parameters['SwetbySw'])**0.5
+        self.print_var(Emax)
+
+        # Zero-lift drag coefficient
+        CD0 = np.pi*Aeff*e/4/Emax**2
+        self.print_var(CD0)
+
         temp = self.declare_variable(name='temp', val=17.48)
         self.register_output(name='Emax', var=temp * 1)
-        # todo: compute
         return
 
 
@@ -537,6 +600,8 @@ if __name__ == '__main__':
     # Aircraft design variables
     sim['Phi25'] = 25.
     sim['Aeff'] = 9.5
+    sim['lambdaeff'] = 0.24
+    sim['dFo'] = 3.95
     sim['BPR'] = 6.
     sim['ConstraintAnalysis.Landing.CLmax_L_unswept'] = 3.76
     sim['ConstraintAnalysis.Takeoff.CLmax_TO_unswept'] = 2.85
@@ -551,7 +616,6 @@ if __name__ == '__main__':
     sim['ConstraintAnalysis.Landing.dTl'] = 0.
     sim['ConstraintAnalysis.Takeoff.stofl'] = 1768.
     sim['ConstraintAnalysis.Takeoff.dTto'] = 0.
-
 
     # Emperical values
     sim['mLbymTO'] = 0.878
@@ -575,26 +639,26 @@ if __name__ == '__main__':
     print('Wing area (m^2) ', sim['Sw'])
     print('Takeoff thrust, all engines (N) ', sim['Tto'])
 
-    # Instantiate your problem using the csdl Simulator object and name your problem
-    prob = CSDLProblem(problem_name='AircraftSizing', simulator=sim)
-    # Setup your preferred optimizer (SLSQP) with the Problem object
-    optimizer = SLSQP(prob, maxiter=100, ftol=1e-10)
-    # Solve your optimization problem
-    optimizer.solve()
-    # Print results of optimization
-    optimizer.print_results()
-
-    sim['VbyVmd'] = optimizer.outputs['x'][-1, 0]
-    sim.run()
-    print('------------------\n------------------')
-    print('Optimium DV value: ', optimizer.outputs['x'][-1, 0])
-    print('Sizing thrust-to-weight ratio: ', sim['ConstraintAnalysis.TbyW'])
-    print('Sizing wing loading: ', sim['ConstraintAnalysis.WbyS'])
-    print('------------------')
-    print('Maximum takeoff mass (kg) ', sim['m_mto'])
-    print('Maximum landing mass (kg) ', sim['MissionAnalysis.m_ml'])
-    print('Mission fuel mass (kg) ', sim['MissionAnalysis.m_f'])
-    print('Total fuel mass (kg) ', sim['MissionAnalysis.m_f_erf'])
-    print('Operating empty mass (kg) ', sim['MissionAnalysis.m_oe'])
-    print('Wing area (m^2) ', sim['Sw'])
-    print('Takeoff thrust, all engines (N) ', sim['Tto'])
+    # # Instantiate your problem using the csdl Simulator object and name your problem
+    # prob = CSDLProblem(problem_name='AircraftSizing', simulator=sim)
+    # # Setup your preferred optimizer (SLSQP) with the Problem object
+    # optimizer = SLSQP(prob, maxiter=100, ftol=1e-10)
+    # # Solve your optimization problem
+    # optimizer.solve()
+    # # Print results of optimization
+    # optimizer.print_results()
+    #
+    # sim['VbyVmd'] = optimizer.outputs['x'][-1, 0]
+    # sim.run()
+    # print('------------------\n------------------')
+    # print('Optimium DV value: ', optimizer.outputs['x'][-1, 0])
+    # print('Sizing thrust-to-weight ratio: ', sim['ConstraintAnalysis.TbyW'])
+    # print('Sizing wing loading: ', sim['ConstraintAnalysis.WbyS'])
+    # print('------------------')
+    # print('Maximum takeoff mass (kg) ', sim['m_mto'])
+    # print('Maximum landing mass (kg) ', sim['MissionAnalysis.m_ml'])
+    # print('Mission fuel mass (kg) ', sim['MissionAnalysis.m_f'])
+    # print('Total fuel mass (kg) ', sim['MissionAnalysis.m_f_erf'])
+    # print('Operating empty mass (kg) ', sim['MissionAnalysis.m_oe'])
+    # print('Wing area (m^2) ', sim['Sw'])
+    # print('Takeoff thrust, all engines (N) ', sim['Tto'])
