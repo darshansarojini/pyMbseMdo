@@ -21,7 +21,6 @@ class AircraftLevelSizing(csdl.Model):
         BPR = self.create_input(name='BPR', desc='By-pass ratio')
 
         mLbymTO = self.create_input(name='mLbymTO', desc='Mass ratio, landing - take-off')
-        mOEbymTO = self.create_input(name='mOEbymTO', desc='Relative operating empty mass')
 
         # region Constraint Analysis
         self.add(submodel=ConstraintAnalysis(),
@@ -42,7 +41,6 @@ class AircraftLevelSizing(csdl.Model):
         self.connect('R', 'MissionAnalysis.R')
         self.connect('BPR', 'MissionAnalysis.BPR')
         self.connect('mLbymTO', 'MissionAnalysis.mLbymTO')
-        self.connect('mOEbymTO', 'MissionAnalysis.mOEbymTO')
 
         self.connect('ConstraintAnalysis.TbyW', 'MissionAnalysis.TbyW')
         self.connect('CruiseAerodynamics.Emax', 'MissionAnalysis.Emax')
@@ -262,7 +260,6 @@ class ConstraintAnalysis(csdl.Model):
                         TbyW_cr*scaling_parameter_TbyW,
                         rho=20.)
         self.register_output(name='TbyW', var=TbyW/scaling_parameter_TbyW)
-        self.print_var(var=TbyW/scaling_parameter_TbyW)
 
         WbyS = csdl.max(WbyS_takeoff, WbyS_landing)
         self.register_output(name='WbyS', var=WbyS)
@@ -287,15 +284,19 @@ class MissionAnalysis(csdl.Model):
         self.parameters.declare(name='nm_to_m', default=1852., types=float)
         self.parameters.declare(name='g', default=9.81, types=float)
 
-        self.parameters.declare(name='Loiter time', default=1800.,
-                                types=float)  # 1800s for international, 2700s for domestic
         self.parameters.declare(name='SFC cruise', default=1.65e-05,  # kg/N/s
                                 types=float, desc='Spec.fuel consumption, cruise')  # todo: compute
+
+        # region Regulation specified extra range
+        self.parameters.declare(name='Loiter time', default=1800.,
+                                types=float)  # 1800s for international, 2700s for domestic
         self.parameters.declare(name='s_alt', default=200.,
                                 types=float, desc='Alternate flight distance')
         self.parameters.declare(name='s_longrange', default=5.,  # 5% for international, 0% for domestic
                                 types=float, desc='Extra distance for long range in %')
+        # endregion
 
+        # region Emperical fuel fractions
         self.parameters.declare(name='Mff_taxi', default=0.997,
                                 types=float, desc='Fuel-Fraction, taxi')
         self.parameters.declare(name='Mff_to', default=0.993,
@@ -306,6 +307,16 @@ class MissionAnalysis(csdl.Model):
                                 types=float, desc='Fuel-Fraction, descent')
         self.parameters.declare(name='Mff_l', default=0.993,
                                 types=float, desc='Fuel-Fraction, landing')
+        # endregion
+
+        # region Cargo and Passengers
+        self.parameters.declare(name='m_pax', default=93.,
+                                types=float, desc='Mass: one passengers, including baggage')
+        self.parameters.declare(name='n_pax', default=180,
+                                types=int, desc='Number of passengers')
+        self.parameters.declare(name='m_cargo', default=2516.,
+                                types=float, desc='Cargo mass')
+        # endregion
         return
 
     def define(self):
@@ -314,11 +325,8 @@ class MissionAnalysis(csdl.Model):
         Emax = self.declare_variable(name='Emax', desc='Maximum glide ratio in cruise')
         M = self.declare_variable(name='M', desc='Mach number')
         TbyW = self.declare_variable(name='TbyW', desc='Thrust loading')
-        # WbyS = self.declare_variable(name='WbyS', desc='Wing loading')
         R = self.declare_variable(name='R', desc='Design range')  # nautical miles
-
         mLbymTO = self.declare_variable(name='mLbymTO', desc='Mass ratio, landing - take-off')
-        mOEbymTO = self.declare_variable(name='mOEbymTO', desc='Relative operating empty mass')
 
         # Glide ratio in cruise
         CLbyCLmd = 1 / VbyVmd**2
@@ -372,9 +380,11 @@ class MissionAnalysis(csdl.Model):
         mFbymMTO = 1 - Mff_total  # Mission fuel fraction
 
         # Masses
-        m_pax = 93  # kg
-        n_pax = 180
-        m_cargo = 2516  # kg
+        m_pax = self.parameters['m_pax']  # kg
+        n_pax = self.parameters['n_pax']
+        m_cargo = self.parameters['m_cargo']  # kg
+
+        mOEbymTO = 0.23 + 1.04*TbyW  # Relative operating empty mass; 0.56 for A320-200
         m_pl = m_pax * n_pax + m_cargo
         m_mto = m_pl / (1-mFbymMTO-mOEbymTO)
         self.register_output(name='m_mto', var=m_mto)
@@ -449,9 +459,6 @@ if __name__ == '__main__':
 
     # Emperical values
     sim['mLbymTO'] = 0.878
-    sim['mOEbymTO'] = 0.56
-    # sim['MissionAnalysis.s_res'] = 510226.  # m
-    # sim['MissionAnalysis.s_alt'] = 200.  # NM
 
     # sim['sfc_cr'] = 1.65E-05  # kg/N/s
 
