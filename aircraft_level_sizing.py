@@ -22,6 +22,9 @@ class AircraftLevelSizing(csdl.Model):
 
         mLbymTO = self.create_input(name='mLbymTO', desc='Mass ratio, landing - take-off')
 
+        VbyVmd = self.create_input(name='VbyVmd')
+        self.add_design_variable(dv_name='VbyVmd', lower=0.65, upper=1.75)
+
         # region Constraint Analysis
         self.add(submodel=ConstraintAnalysis(),
                  name='ConstraintAnalysis', promotes=[])
@@ -41,6 +44,7 @@ class AircraftLevelSizing(csdl.Model):
         self.connect('R', 'MissionAnalysis.R')
         self.connect('BPR', 'MissionAnalysis.BPR')
         self.connect('mLbymTO', 'MissionAnalysis.mLbymTO')
+        self.connect('VbyVmd', 'MissionAnalysis.VbyVmd')
 
         self.connect('ConstraintAnalysis.TbyW', 'MissionAnalysis.TbyW')
         self.connect('CruiseAerodynamics.Emax', 'MissionAnalysis.Emax')
@@ -388,6 +392,7 @@ class MissionAnalysis(csdl.Model):
         m_pl = m_pax * n_pax + m_cargo
         m_mto = m_pl / (1-mFbymMTO-mOEbymTO)
         self.register_output(name='m_mto', var=m_mto)
+        self.add_objective(name='m_mto', scaler=1e-4)
 
         # Mission fuel, standard flight
         m_f = m_mto * mFbymMTO
@@ -419,8 +424,8 @@ class MissionAnalysis(csdl.Model):
         # m_ml > m_mzf + m_f_res
         constr_m_ml = m_ml - m_ml_comp
         self.register_output(name='Constraint_m_ml', var=constr_m_ml)
-        self.add_constraint(name='Constraint_m_ml', lower=0.)
-        self.print_var(var=constr_m_ml)
+        self.add_constraint(name='Constraint_m_ml', lower=0., scaler=1e-2)
+        # self.print_var(var=constr_m_ml)
         return
 
 
@@ -447,6 +452,7 @@ if __name__ == '__main__':
     sim['ConstraintAnalysis.Landing.CLmax_L_unswept'] = 3.76
     sim['ConstraintAnalysis.Takeoff.CLmax_TO_unswept'] = 2.85
     # sim['MissionAnalysis.Emax'] = 17.48
+    sim['VbyVmd'] = 0.94844796  # 0.94844796
 
     # Operating conditions
     sim['M'] = 0.76
@@ -460,20 +466,41 @@ if __name__ == '__main__':
     # Emperical values
     sim['mLbymTO'] = 0.878
 
-    # sim['sfc_cr'] = 1.65E-05  # kg/N/s
-
-    sim['MissionAnalysis.VbyVmd'] = 0.94844796  # 0.94844796
-
     sim.run()
+    print('------------------\n------------------')
     print('Approach speed (m/s): ', sim['ConstraintAnalysis.Landing.Vapp'])
     print('Wing loading at max. landing mass: ', sim['ConstraintAnalysis.Landing.mLbySW'])
     print('Wing loading at max. takeoff mass: ', sim['ConstraintAnalysis.Takeoff.mTObySW'])
     print('Thrust-to-weight ratio takeoff: ', sim['ConstraintAnalysis.Takeoff.TtobyWto'])
     print('Thrust-to-weight ratio glide: ', sim['ConstraintAnalysis.GlideRatio.TtobyWto'])
-    print('------------------\n------------------')
+    print('------------------')
     print('Sizing thrust-to-weight ratio: ', sim['ConstraintAnalysis.TbyW'])
     print('Sizing wing loading: ', sim['ConstraintAnalysis.WbyS'])
+    print('------------------')
+    print('Maximum takeoff mass (kg) ', sim['m_mto'])
+    print('Maximum landing mass (kg) ', sim['MissionAnalysis.m_ml'])
+    print('Mission fuel mass (kg) ', sim['MissionAnalysis.m_f'])
+    print('Total fuel mass (kg) ', sim['MissionAnalysis.m_f_erf'])
+    print('Operating empty mass (kg) ', sim['MissionAnalysis.m_oe'])
+    print('Wing area (m^2) ', sim['Sw'])
+    print('Takeoff thrust, all engines (N) ', sim['Tto'])
+
+    # Instantiate your problem using the csdl Simulator object and name your problem
+    prob = CSDLProblem(problem_name='AircraftSizing', simulator=sim)
+    # Setup your preferred optimizer (SLSQP) with the Problem object
+    optimizer = SLSQP(prob, maxiter=100, ftol=1e-10)
+    # Solve your optimization problem
+    optimizer.solve()
+    # Print results of optimization
+    optimizer.print_results()
+
+    sim['VbyVmd'] = optimizer.outputs['x'][-1, 0]
+    sim.run()
     print('------------------\n------------------')
+    print('Optimium DV value: ', optimizer.outputs['x'][-1, 0])
+    print('Sizing thrust-to-weight ratio: ', sim['ConstraintAnalysis.TbyW'])
+    print('Sizing wing loading: ', sim['ConstraintAnalysis.WbyS'])
+    print('------------------')
     print('Maximum takeoff mass (kg) ', sim['m_mto'])
     print('Maximum landing mass (kg) ', sim['MissionAnalysis.m_ml'])
     print('Mission fuel mass (kg) ', sim['MissionAnalysis.m_f'])
