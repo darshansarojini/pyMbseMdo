@@ -21,6 +21,7 @@ class AircraftLevelSizing(csdl.Model):
         BPR = self.create_input(name='BPR', desc='By-pass ratio')
         lambdaeff = self.create_input(name='lambdaeff', desc='Taper ratio')
         dFo = self.create_input(name='dFo', desc='Fuselage outer diameter')
+        nE = self.create_input(name='nE', desc='Number of engines')
 
         mLbymTO = self.create_input(name='mLbymTO', desc='Mass ratio, landing - take-off')
 
@@ -38,6 +39,16 @@ class AircraftLevelSizing(csdl.Model):
         self.connect('M', 'CruiseAerodynamics.M')
         # endregion
 
+        # region SFC Calculation
+        self.add(submodel=SfcCalculation(),
+                 name='SfcCalculation', promotes=[])
+        self.connect('M', 'SfcCalculation.M')
+        self.connect('BPR', 'SfcCalculation.BPR')
+        self.connect('MissionAnalysis.hcr', 'SfcCalculation.hcr')
+        self.connect('Tto', 'SfcCalculation.Tto')
+        self.connect('nE', 'SfcCalculation.nE')
+        # endregion
+
         # region Constraint Analysis
         self.add(submodel=ConstraintAnalysis(),
                  name='ConstraintAnalysis', promotes=[])
@@ -47,6 +58,7 @@ class AircraftLevelSizing(csdl.Model):
         self.connect('VbyVmd', 'ConstraintAnalysis.VbyVmd')
         self.connect('M', 'ConstraintAnalysis.M')
         self.connect('BPR', 'ConstraintAnalysis.BPR')
+        self.connect('nE', 'ConstraintAnalysis.nE')
         self.connect('CruiseAerodynamics.Emax', 'ConstraintAnalysis.Emax')
         self.connect('CruiseAerodynamics.CD0', 'ConstraintAnalysis.CD0')
         self.connect('CruiseAerodynamics.e', 'ConstraintAnalysis.e')
@@ -91,6 +103,86 @@ class FuelTankVolume(csdl.Model):
         m_f_erf = self.declare_variable(name='m_f_erf', desc='Total fuel mass needed (kg)')
         rho_f = self.parameters['FuelDensity']
         V_f_erf = m_f_erf / rho_f
+
+        return
+
+
+class SfcCalculation(csdl.Model):
+    def initialize(self):
+        self.parameters.declare(name='dPbyp', default=2, types=int,
+                                desc='Inlet pressure loss %')
+        self.parameters.declare(name='T0', default=288.15, types=float,
+                                desc='Temperature (ISA) at SL')  # K
+        self.parameters.declare(name='L', default=0.0065, types=float,
+                                desc='Temperature lapse rate in troposphere')  # K/m
+        self.parameters.declare(name='TS', default=216.65, types=float,
+                                desc='Temperature (ISA) at tropopause')  # K
+        self.parameters.declare(name='gamma', default=1.4,
+                                types=float, desc='Ratio of specific heats, air')
+        return
+
+    def define(self):
+        M = self.declare_variable(name='M', desc='Mach number')
+        BPR = self.declare_variable(name='BPR', desc='By-pass ratio')
+        nE = self.declare_variable(name='nE', desc='Number of engines')
+
+        hcr = self.declare_variable(name='hcr', desc='Cruise altitude')
+        Tto = self.declare_variable(name='Tto', desc='Take-off thrust')
+
+        # Thrust of a single engine
+        T_oneengine = Tto/nE * 1e-3  # kN
+
+        # Overall Pressure ratio
+        OAPR = 0.0266785 * T_oneengine * 10 ** -3 + 3.5158 * BPR + 0.0556628
+
+        # Turbine entry temperature
+        T_TE = -8000 / T_oneengine + 1520
+
+        # Inlet efficiency
+        eta_inlet = 1 - (1.3 + 0.25*BPR) * (self.parameters['dPbyp']/100)
+
+        # Fan efficiency
+        eta_fan = -5.978/(5.978+T_oneengine)-M*0.1479-0.133498/(0.133498+BPR)+1.05489
+
+        # Compressor efficiency
+        eta_comp = -2/(2+T_oneengine)-0.1171127/(0.1171127+BPR)-M*0.0541+0.9407245
+
+        # Turbine efficiency
+        eta_turb = -3.403/(3.403+T_oneengine)+1.04826-M*0.15533
+
+        # Nozzle efficiency
+        eta_noz = -2.0319/(2.0319+T_oneengine)+1.00764-M*0.009868
+
+        # Temperature at cruise altitude
+        T = self.parameters['T0'] - self.parameters['L'] * hcr
+
+        # Dimensionless turbine entry temperature
+        phi = T_TE / T
+
+        # Ratio between stagnation point temperature and ambient temperature
+        nu = 1+(self.parameters['gamma']-1)/2*M**2
+
+        # Temperature function
+        xi = nu*(OAPR**((self.parameters['gamma']-1)/self.parameters['gamma'])-1)
+
+        # Gas generator efficiency
+        eta_gasgen = 1-(0.7*M**2*(1-eta_inlet))/(1+0.2*M**2)
+
+        # Gas generator function
+        G = (phi-xi/eta_comp) * \
+            (1-1.01/(eta_gasgen**((self.parameters['gamma']-1)/self.parameters['gamma'])*(xi+nu)
+                     * (1-xi/phi/eta_comp/eta_turb))
+             )
+
+        # SFC
+        SFC = (0.697 * (T/self.parameters['T0'])**0.5 * (phi-nu-xi/eta_comp)) / \
+              ((5*eta_noz * (1+eta_fan*eta_turb*BPR) *
+                (G+0.2*M**2*BPR*eta_comp/eta_fan/eta_turb))**0.5 - M*(1+BPR))  # kg/daN/h
+        SFC = SFC * 1/36000
+        self.print_var(SFC)
+
+        temp = self.declare_variable(name='temp', val=1.650E-05)
+        self.register_output(name='SFC', var=temp*1)
 
         return
 
@@ -149,7 +241,7 @@ class CruiseAerodynamics(csdl.Model):
 
         # Maximum glide ratio
         Emax = ke * (Aeff / self.parameters['SwetbySw']) ** 0.5
-        self.print_var(Emax)
+        # self.print_var(Emax)
 
         # Zero-lift drag coefficient
         CD0 = np.pi * Aeff * e / 4 / Emax ** 2
@@ -166,6 +258,7 @@ class CruiseAerodynamics(csdl.Model):
         return
 # endregion
 
+
 # region Constraint Analysis
 class ConstraintAnalysis(csdl.Model):
     def initialize(self):
@@ -178,7 +271,7 @@ class ConstraintAnalysis(csdl.Model):
 
         mLbymTO = self.create_input(name='mLbymTO', desc='Mass ratio, landing - take-off')
         nE = self.create_input(name='nE', desc='Number of engines')
-        nE = self.create_input(name='VbyVmd', desc='Number of engines')
+        VbyVmd = self.create_input(name='VbyVmd', desc='Design variable')
         M = self.create_input(name='M', desc='Mach number')
         BPR = self.create_input(name='BPR', desc='By-pass ratio')
         Emax = self.create_input(name='Emax', desc='Maximum glide ratio in cruise')
@@ -415,7 +508,8 @@ class MissedApproach(csdl.Model):
 class CruiseMatching(csdl.Model):
     def initialize(self):
         self.parameters.declare(name='g', default=9.81, types=float)
-        self.parameters.declare(name='gamma', default=1.4, types=float)
+        self.parameters.declare(name='gamma', default=1.4,
+                                types=float, desc='Ratio of specific heats, air')
         self.parameters.declare(name='p0', default=101325., types=float,
                                 desc='Air pressure, ISA, standard')
         return
@@ -622,7 +716,7 @@ if __name__ == '__main__':
     # Operating conditions
     sim['M'] = 0.76
     sim['R'] = 1510.  # NM
-    sim['ConstraintAnalysis.nE'] = 2
+    sim['nE'] = 2
     sim['ConstraintAnalysis.Landing.slfl'] = 1448.
     sim['ConstraintAnalysis.Landing.dTl'] = 0.
     sim['ConstraintAnalysis.Takeoff.stofl'] = 1768.
@@ -652,26 +746,26 @@ if __name__ == '__main__':
     print('Wing area (m^2) ', sim['Sw'])
     print('Takeoff thrust, all engines (N) ', sim['Tto'])
 
-    # Instantiate your problem using the csdl Simulator object and name your problem
-    prob = CSDLProblem(problem_name='AircraftSizing', simulator=sim)
-    # Setup your preferred optimizer (SLSQP) with the Problem object
-    optimizer = SLSQP(prob, maxiter=100, ftol=1e-10)
-    # Solve your optimization problem
-    optimizer.solve()
-    # Print results of optimization
-    optimizer.print_results()
-
-    sim['VbyVmd'] = optimizer.outputs['x'][-1, 0]
-    sim.run()
-    print('------------------\n------------------')
-    print('Optimium DV value: ', optimizer.outputs['x'][-1, 0])
-    print('Sizing thrust-to-weight ratio: ', sim['ConstraintAnalysis.TbyW'])
-    print('Sizing wing loading: ', sim['ConstraintAnalysis.WbyS'])
-    print('------------------')
-    print('Maximum takeoff mass (kg) ', sim['m_mto'])
-    print('Maximum landing mass (kg) ', sim['MissionAnalysis.m_ml'])
-    print('Mission fuel mass (kg) ', sim['MissionAnalysis.m_f'])
-    print('Total fuel mass (kg) ', sim['MissionAnalysis.m_f_erf'])
-    print('Operating empty mass (kg) ', sim['MissionAnalysis.m_oe'])
-    print('Wing area (m^2) ', sim['Sw'])
-    print('Takeoff thrust, all engines (N) ', sim['Tto'])
+    # # Instantiate your problem using the csdl Simulator object and name your problem
+    # prob = CSDLProblem(problem_name='AircraftSizing', simulator=sim)
+    # # Setup your preferred optimizer (SLSQP) with the Problem object
+    # optimizer = SLSQP(prob, maxiter=100, ftol=1e-10)
+    # # Solve your optimization problem
+    # optimizer.solve()
+    # # Print results of optimization
+    # optimizer.print_results()
+    #
+    # sim['VbyVmd'] = optimizer.outputs['x'][-1, 0]
+    # sim.run()
+    # print('------------------\n------------------')
+    # print('Optimium DV value: ', optimizer.outputs['x'][-1, 0])
+    # print('Sizing thrust-to-weight ratio: ', sim['ConstraintAnalysis.TbyW'])
+    # print('Sizing wing loading: ', sim['ConstraintAnalysis.WbyS'])
+    # print('------------------')
+    # print('Maximum takeoff mass (kg) ', sim['m_mto'])
+    # print('Maximum landing mass (kg) ', sim['MissionAnalysis.m_ml'])
+    # print('Mission fuel mass (kg) ', sim['MissionAnalysis.m_f'])
+    # print('Total fuel mass (kg) ', sim['MissionAnalysis.m_f_erf'])
+    # print('Operating empty mass (kg) ', sim['MissionAnalysis.m_oe'])
+    # print('Wing area (m^2) ', sim['Sw'])
+    # print('Takeoff thrust, all engines (N) ', sim['Tto'])
