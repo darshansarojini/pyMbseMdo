@@ -14,6 +14,10 @@ class AircraftLevelSizing(csdl.Model):
         return
 
     def define(self):
+
+        # Sw_guess = self.create_input(name='Sw_guess', desc='Guess for wing area')
+        # self.add_design_variable(dv_name='Sw_guess', lower=110., upper=140.)
+
         Aeff = self.create_input(name='Aeff', desc='Aspect ratio')
         M = self.create_input(name='M', desc='Mach number')
         Phi25 = self.create_input(name='Phi25', units='deg', desc='Sweep angle, at 25% of chord')
@@ -72,9 +76,11 @@ class AircraftLevelSizing(csdl.Model):
         self.connect('BPR', 'MissionAnalysis.BPR')
         self.connect('mLbymTO', 'MissionAnalysis.mLbymTO')
         self.connect('VbyVmd', 'MissionAnalysis.VbyVmd')
+        self.connect('Sw', 'MissionAnalysis.Sw')
 
         self.connect('ConstraintAnalysis.TbyW', 'MissionAnalysis.TbyW')
         self.connect('CruiseAerodynamics.Emax', 'MissionAnalysis.Emax')
+        self.connect('ConstraintAnalysis.CruiseMatching.CL_cruise', 'MissionAnalysis.CL_cr')
         # endregion
 
         # region Aircraft parameters
@@ -87,6 +93,12 @@ class AircraftLevelSizing(csdl.Model):
 
         Sw = m_mto / WbyS
         self.register_output(name='Sw', var=Sw)
+
+        # Sw_constraint = Sw_guess - Sw
+        # self.print_var(var=Sw_constraint)
+        # self.register_output(name='Sw_constraint', var=Sw_constraint)
+        # self.add_constraint(name='Sw_constraint', equals=0.)
+
         Tto = m_mto * self.parameters['g'] * TbyW
         self.register_output(name='Tto', var=Tto)
         # endregion
@@ -241,7 +253,6 @@ class CruiseAerodynamics(csdl.Model):
 
         # Maximum glide ratio
         Emax = ke * (Aeff / self.parameters['SwetbySw']) ** 0.5
-        # self.print_var(Emax)
 
         # Zero-lift drag coefficient
         CD0 = np.pi * Aeff * e / 4 / Emax ** 2
@@ -530,6 +541,7 @@ class CruiseMatching(csdl.Model):
 
         # # Lift coefficient at cruise
         CL_cr = CLbyCLmd * CL_md
+        self.register_output(name='CL_cruise', var=CL_cr)
 
         # Pressure at Cruise
         p_cr = mTObySW*2*self.parameters['g']/self.parameters['gamma']/CL_cr/M**2
@@ -600,6 +612,8 @@ class MissionAnalysis(csdl.Model):
         TbyW = self.declare_variable(name='TbyW', desc='Thrust loading')
         R = self.declare_variable(name='R', desc='Design range')  # nautical miles
         mLbymTO = self.declare_variable(name='mLbymTO', desc='Mass ratio, landing - take-off')
+        CL_cr = self.declare_variable(name='CL_cr', desc='Cruise lift coefficient')
+        Sw = self.declare_variable(name='Sw', desc='Wing area')
 
         # Glide ratio in cruise
         CLbyCLmd = 1 / VbyVmd**2
@@ -614,12 +628,18 @@ class MissionAnalysis(csdl.Model):
         # Cruise speed
         self.add(submodel=AtmosphereModel(shape=(1,)), name='Atmosisa', promotes=[])
         acr = self.declare_variable(name='acr')
+        rhocr = self.declare_variable(name='rhocr')
         self.connect('hcr', 'Atmosisa.z')
         self.connect('Atmosisa.speed_of_sound', 'acr')
+        self.connect('Atmosisa.density', 'rhocr')
         # Tcr = 216.65
         # acr = 20.05 * Tcr**0.5
         Vcr = acr * M  # m/s
         self.register_output(name='Vcr', var=Vcr)
+
+        # Cruise Lift
+        Lcr = 0.5 * rhocr * Vcr ** 2 * CL_cr * Sw
+        self.register_output(name='Cruise_lift', var=Lcr)
 
         # Mission ranges
         R = R * self.parameters['nm_to_m']  # m
@@ -691,16 +711,23 @@ class MissionAnalysis(csdl.Model):
 
         # Constraint on maximum landing mass
         # m_ml > m_mzf + m_f_res
-        constr_m_ml = m_ml - m_ml_comp
-        self.register_output(name='Constraint_m_ml', var=constr_m_ml)
-        self.add_constraint(name='Constraint_m_ml', lower=0., scaler=1e-2)
-        # self.print_var(var=constr_m_ml)
+        constr_m_ml = m_ml_comp - m_ml
+        self.register_output(name='Constraint_landing', var=constr_m_ml)
+        self.add_constraint(name='Constraint_landing', upper=0., scaler=1e-2)
+
+        # Constraint on cruise lift
+        # Lift >= weight --> weight - lift <= 0
+        Wcr = m_mto*(Mff_taxi*Mff_to*Mff_clb)*self.parameters['g']
+        constr_cr_lift = Wcr - Lcr
+        self.register_output(name='Constraint_cruise', var=constr_cr_lift)
+        self.add_constraint(name='Constraint_cruise', upper=0., scaler=1e-5)
         return
 # endregion
 
 
 if __name__ == '__main__':
     sim = python_csdl_backend.Simulator(AircraftLevelSizing())
+    # sim = csdl_om.Simulator(AircraftLevelSizing())
 
     # Aircraft design variables
     sim['Phi25'] = 25.
@@ -711,7 +738,10 @@ if __name__ == '__main__':
     sim['ConstraintAnalysis.Landing.CLmax_L_unswept'] = 3.76
     sim['ConstraintAnalysis.Takeoff.CLmax_TO_unswept'] = 2.85
     # sim['MissionAnalysis.Emax'] = 17.48
+
+    # Optimization Design Variables
     sim['VbyVmd'] = 0.94844796  # 0.94844796
+    # sim['Sw_guess'] = 122.4
 
     # Operating conditions
     sim['M'] = 0.76
@@ -726,6 +756,7 @@ if __name__ == '__main__':
     sim['mLbymTO'] = 0.878
 
     sim.run()
+    # sim.visualize_implementation()
     print('------------------\n------------------')
     print('Approach speed (m/s): ', sim['ConstraintAnalysis.Landing.Vapp'])
     print('Wing loading at max. landing mass: ', sim['ConstraintAnalysis.Landing.mLbySW'])
@@ -746,26 +777,28 @@ if __name__ == '__main__':
     print('Wing area (m^2) ', sim['Sw'])
     print('Takeoff thrust, all engines (N) ', sim['Tto'])
 
-    # # Instantiate your problem using the csdl Simulator object and name your problem
-    # prob = CSDLProblem(problem_name='AircraftSizing', simulator=sim)
-    # # Setup your preferred optimizer (SLSQP) with the Problem object
-    # optimizer = SLSQP(prob, maxiter=100, ftol=1e-10)
-    # # Solve your optimization problem
-    # optimizer.solve()
-    # # Print results of optimization
-    # optimizer.print_results()
-    #
-    # sim['VbyVmd'] = optimizer.outputs['x'][-1, 0]
-    # sim.run()
-    # print('------------------\n------------------')
-    # print('Optimium DV value: ', optimizer.outputs['x'][-1, 0])
-    # print('Sizing thrust-to-weight ratio: ', sim['ConstraintAnalysis.TbyW'])
-    # print('Sizing wing loading: ', sim['ConstraintAnalysis.WbyS'])
-    # print('------------------')
-    # print('Maximum takeoff mass (kg) ', sim['m_mto'])
-    # print('Maximum landing mass (kg) ', sim['MissionAnalysis.m_ml'])
-    # print('Mission fuel mass (kg) ', sim['MissionAnalysis.m_f'])
-    # print('Total fuel mass (kg) ', sim['MissionAnalysis.m_f_erf'])
-    # print('Operating empty mass (kg) ', sim['MissionAnalysis.m_oe'])
-    # print('Wing area (m^2) ', sim['Sw'])
-    # print('Takeoff thrust, all engines (N) ', sim['Tto'])
+    # Instantiate your problem using the csdl Simulator object and name your problem
+    prob = CSDLProblem(problem_name='AircraftSizing', simulator=sim)
+    # Setup your preferred optimizer (SLSQP) with the Problem object
+    optimizer = SLSQP(prob, maxiter=100, ftol=1e-10)
+    # Solve your optimization problem
+    optimizer.solve()
+    # Print results of optimization
+    optimizer.print_results()
+
+    sim['VbyVmd'] = optimizer.outputs['x'][-1, 0]
+    sim.run()
+    print('------------------\n------------------')
+    print('Optimium DV value: ', optimizer.outputs['x'][-1, 0])
+    print('Sizing thrust-to-weight ratio: ', sim['ConstraintAnalysis.TbyW'])
+    print('Sizing wing loading: ', sim['ConstraintAnalysis.WbyS'])
+    print('------------------')
+    print('Maximum takeoff mass (kg) ', sim['m_mto'])
+    print('Maximum landing mass (kg) ', sim['MissionAnalysis.m_ml'])
+    print('Mission fuel mass (kg) ', sim['MissionAnalysis.m_f'])
+    print('Total fuel mass (kg) ', sim['MissionAnalysis.m_f_erf'])
+    print('Operating empty mass (kg) ', sim['MissionAnalysis.m_oe'])
+    print('Wing area (m^2) ', sim['Sw'])
+    print('Takeoff thrust, all engines (N) ', sim['Tto'])
+    print('Landing constraint: ', sim['MissionAnalysis.Constraint_landing'])
+    print('Cruise constraint: ', sim['MissionAnalysis.Constraint_cruise'])
