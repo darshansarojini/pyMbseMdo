@@ -26,6 +26,7 @@ class AircraftLevelSizing(csdl.Model):
         lambdaeff = self.create_input(name='lambdaeff', desc='Taper ratio')
         dFo = self.create_input(name='dFo', desc='Fuselage outer diameter')
         nE = self.create_input(name='nE', desc='Number of engines')
+        tbyc = self.create_input(name='tbyc', desc='Wing relative thickness, average')
 
         mLbymTO = self.create_input(name='mLbymTO', desc='Mass ratio, landing - take-off')
 
@@ -102,6 +103,16 @@ class AircraftLevelSizing(csdl.Model):
         Tto = m_mto * self.parameters['g'] * TbyW
         self.register_output(name='Tto', var=Tto)
         # endregion
+
+        # region Fuel Tank Volume Constraint
+        self.add(submodel=FuelTankVolume(), promotes=[], name='FuelTankVolume')
+        self.connect('Aeff', 'FuelTankVolume.Aeff')
+        self.connect('lambdaeff', 'FuelTankVolume.lambdaeff')
+        self.connect('Sw', 'FuelTankVolume.Sw')
+        self.connect('tbyc', 'FuelTankVolume.tbyc')
+        self.connect('MissionAnalysis.m_f_erf', 'FuelTankVolume.m_f_erf')
+        # endregion
+
         return
 
 
@@ -109,13 +120,32 @@ class AircraftLevelSizing(csdl.Model):
 class FuelTankVolume(csdl.Model):
     def initialize(self):
         self.parameters.declare(name='FuelDensity', default=800., types=float)
+        self.parameters.declare(name='kCS', default=-2., desc='CS 25.979(b) fuel tank correction', types=float)  # %
+        self.parameters.declare(name='kUF', default=-3., desc='Correction accounting for unusable fuel', types=float)  # %
         return
 
     def define(self):
         m_f_erf = self.declare_variable(name='m_f_erf', desc='Total fuel mass needed (kg)')
+        Aeff = self.declare_variable(name='Aeff', desc='Aspect ratio')
+        lambdaeff = self.declare_variable(name='lambdaeff', desc='Taper ratio')
+        tbyc = self.declare_variable(name='tbyc', desc='Wing average relative thickness')
+        Sw = self.declare_variable(name='Sw', desc='Wing area')
+
+        # Fuel volume needed
         rho_f = self.parameters['FuelDensity']
         V_f_erf = m_f_erf / rho_f
+        self.register_output(name='FuelVolumeNeeded', var=V_f_erf)
 
+        # Tank volume available
+        Vtank = 0.54 * Sw ** 1.5 * tbyc * (1 / Aeff**0.5) * (1 + lambdaeff + lambdaeff ** 2) / (1 + lambdaeff) ** 2
+        Vtank = Vtank * (1 + (self.parameters['kCS']/100 + self.parameters['kUF']/100))
+        self.register_output(name='FuelTankVolume', var=Vtank)
+
+        # Fuel tank volume constraint
+        # Vtank > V_f_erf
+        constr_vtank = V_f_erf - Vtank
+        self.register_output(name='Constraint_FuelTankVolume', var=constr_vtank)
+        self.add_constraint(name='Constraint_FuelTankVolume', upper=0., scaler=1e-2)
         return
 
 
@@ -735,6 +765,7 @@ if __name__ == '__main__':
     sim['lambdaeff'] = 0.24
     sim['dFo'] = 3.95
     sim['BPR'] = 6.
+    sim['tbyc'] = 0.11
     sim['ConstraintAnalysis.Landing.CLmax_L_unswept'] = 3.76
     sim['ConstraintAnalysis.Takeoff.CLmax_TO_unswept'] = 2.85
     # sim['MissionAnalysis.Emax'] = 17.48
@@ -802,3 +833,4 @@ if __name__ == '__main__':
     print('Takeoff thrust, all engines (N) ', sim['Tto'])
     print('Landing constraint: ', sim['MissionAnalysis.Constraint_landing'])
     print('Cruise constraint: ', sim['MissionAnalysis.Constraint_cruise'])
+    print('Cruise constraint: ', sim['FuelTankVolume.Constraint_FuelTankVolume'])
