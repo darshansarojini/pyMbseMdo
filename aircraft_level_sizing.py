@@ -1,5 +1,6 @@
+import scipy.io as sio
 import numpy as np
-
+import sys
 import csdl
 import python_csdl_backend
 import csdl_om
@@ -760,14 +761,14 @@ if __name__ == '__main__':
     # sim = csdl_om.Simulator(AircraftLevelSizing())
 
     # Aircraft design variables
-    sim['Phi25'] = 25.
-    sim['Aeff'] = 9.5
-    sim['lambdaeff'] = 0.24
-    sim['dFo'] = 3.95
-    sim['BPR'] = 6.
-    sim['tbyc'] = 0.11
-    sim['ConstraintAnalysis.Landing.CLmax_L_unswept'] = 3.76
-    sim['ConstraintAnalysis.Takeoff.CLmax_TO_unswept'] = 2.85
+    sim['Phi25'] = float(sys.argv[1])
+    sim['Aeff'] = float(sys.argv[2])
+    sim['lambdaeff'] = float(sys.argv[3])
+    sim['dFo'] = float(sys.argv[4])
+    sim['BPR'] = float(sys.argv[5])
+    sim['tbyc'] = float(sys.argv[6])
+    sim['ConstraintAnalysis.Landing.CLmax_L_unswept'] = float(sys.argv[7])
+    sim['ConstraintAnalysis.Takeoff.CLmax_TO_unswept'] = float(sys.argv[8])
     # sim['MissionAnalysis.Emax'] = 17.48
 
     # Optimization Design Variables
@@ -775,13 +776,13 @@ if __name__ == '__main__':
     # sim['Sw_guess'] = 122.4
 
     # Operating conditions
-    sim['M'] = 0.76
-    sim['R'] = 1510.  # NM
-    sim['nE'] = 2
-    sim['ConstraintAnalysis.Landing.slfl'] = 1448.
-    sim['ConstraintAnalysis.Landing.dTl'] = 0.
-    sim['ConstraintAnalysis.Takeoff.stofl'] = 1768.
-    sim['ConstraintAnalysis.Takeoff.dTto'] = 0.
+    sim['M'] = float(sys.argv[9])
+    sim['R'] = float(sys.argv[10])  # NM
+    sim['nE'] = float(sys.argv[11])
+    sim['ConstraintAnalysis.Landing.slfl'] = float(sys.argv[12])
+    sim['ConstraintAnalysis.Landing.dTl'] = float(sys.argv[13])
+    sim['ConstraintAnalysis.Takeoff.stofl'] = float(sys.argv[14])
+    sim['ConstraintAnalysis.Takeoff.dTto'] = float(sys.argv[15])
 
     # Emperical values
     sim['mLbymTO'] = 0.878
@@ -816,7 +817,7 @@ if __name__ == '__main__':
     optimizer.solve()
     # Print results of optimization
     optimizer.print_results()
-
+    
     sim['VbyVmd'] = optimizer.outputs['x'][-1, 0]
     sim.run()
     print('------------------\n------------------')
@@ -833,4 +834,13 @@ if __name__ == '__main__':
     print('Takeoff thrust, all engines (N) ', sim['Tto'])
     print('Landing constraint: ', sim['MissionAnalysis.Constraint_landing'])
     print('Cruise constraint: ', sim['MissionAnalysis.Constraint_cruise'])
-    print('Cruise constraint: ', sim['FuelTankVolume.Constraint_FuelTankVolume'])
+    print('Fuel Tank Volume constraint: ', sim['FuelTankVolume.Constraint_FuelTankVolume'])
+    # create some variables
+    Landing_constraint = [sim['MissionAnalysis.Constraint_landing']]
+    Cruise_constraint = [sim['MissionAnalysis.Constraint_cruise']]
+    Fuel_Tank_Volume_constraint = [sim['FuelTankVolume.Constraint_FuelTankVolume']]
+    Takeoff_thrust = [sim['Tto']]
+    # save variables to a .mat file
+    sio.savemat('variables.mat', {'a': Landing_constraint, 'b': Cruise_constraint, 'c':Fuel_Tank_Volume_constraint, 'd':Takeoff_thrust})
+
+
