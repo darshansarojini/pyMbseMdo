@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<HarnessInformation>
+  <Harness>
+    <P Name="Name">Tankvol_check_Harness1</P>
+    <P Name="Description"/>
+    <P Name="CreatedBy">horty</P>
+    <P Name="CreatedOn">Tue Feb 20 15:04:29 2024</P>
+    <P Name="ModifiedBy">horty</P>
+    <P Name="LastSaved">Fri Mar 01 06:52:46 2024</P>
+    <P Name="Owner">2</P>
+    <P Name="OwnerType">SS_HARNESS</P>
+    <P Name="OwnerPath">Subsystem</P>
+    <P Name="Directory"/>
+    <P Name="FileName">Tankvol_check_Harness1.slx</P>
+    <P Name="SavedVersion">10.7</P>
+    <P Name="HarnessUUID">b65ecbf6-b29f-4c03-9683-08025992c277</P>
+    <P Name="HarnessConnectionsMap">0|0|0,0,0,0||</P>
+    <P Name="VerificationMode">0</P>
+    <P Name="HarnessOwnerCheckSum">0,0,0,0</P>
+    <P Name="RebuildOnOpen">false</P>
+    <P Name="RebuildModelData">false</P>
+    <P Name="Graphical">false</P>
+    <P Name="DriveFcnCallWithTS">true</P>
+    <P Name="ScheduleInitTermReset">false</P>
+    <P Name="AutoShapeInputs">false</P>
+    <P Name="SLDVCompatible">no</P>
+    <P Name="SynchronizationMode">0</P>
+    <P Name="IsImported">false</P>
+    <P Name="PostRebuildCB"/>
+    <P Name="IsCodeContext">false</P>
+    <P Name="SchedulerBlock">1</P>
+    <P Name="SourceTypeString">Inport</P>
+    <P Name="SinkTypeString">Outport</P>
+    <P Name="CustomSourcePath"/>
+    <P Name="CustomSinkPath"/>
+    <P Name="BlockSIDs">4|12|0|0|0|20|0</P>
+    <P Name="OpenGraphs">||Tankvol_check_Harness1</P>
+    <P Name="ExistingBuildFolder"/>
+    <P Name="FunctionInterfaceName"/>
+  </Harness>
+  <ModelMetadata>
+    <P Name="ModelUUID">1ed3b6af-7405-41e3-8c18-3de8e6df93d7</P>
+    <P Name="OwnerBDName">Tankvol_check</P>
+  </ModelMetadata>
+</HarnessInformation>
