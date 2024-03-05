@@ -36,4 +36,4 @@ command_to_activate_anaconda = "activate base";
 command_to_activate_environment = strcat("conda activate ", environment_name);
 command_to_cd_to_python_script = strcat("cd ", python_file_path);
 ```
-4. Open **Final_AIAA_mldtx** and run all the tests. To see how the requirements are linked - open the different requirements in the requirements editor. 
+4. Open **Final_AIAA.mldatx** and run all the tests. To see how the requirements are linked - open the different requirements in the requirements editor. 
